@@ -1,38 +1,43 @@
 # Publishes this n8n community node package to npm on every version tag push.
-# See https://github.com/n8n-io/n8n-nodes-starter for provenance / trusted publisher setup.
+#
+# Starting May 1 2026, n8n requires community nodes to be published via GitHub
+# Actions with npm provenance. See https://github.com/n8n-io/n8n-nodes-starter
+#
+# OIDC: add this repo as a Trusted Publisher on npm for the package (no NPM_TOKEN).
+# Fallback: set NPM_TOKEN in GitHub Actions secrets.
 
 name: Publish
 
 on:
-	push:
-		tags:
-			- '*.*.*'
-			- 'v*.*.*'
+  push:
+    tags:
+      - '*.*.*'
+      - 'v*.*.*'
 
 jobs:
-	publish:
-		name: Publish to npm
-		runs-on: ubuntu-latest
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
 
-		permissions:
-			id-token: write
-			contents: read
+    permissions:
+      id-token: write
+      contents: read
 
-		steps:
-			- uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-			- name: Set up Node.js
-				uses: actions/setup-node@v4
-				with:
-					node-version: 'lts/*'
-					cache: 'npm'
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
 
-			- name: Install dependencies
-				run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-			- name: Release
-				run: |
-					[ -n "$NPM_TOKEN" ] && npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-					npm run release
-				env:
-					NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Release
+        run: |
+          [ -n "$NPM_TOKEN" ] && npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          npm run release
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
