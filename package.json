@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-hacknotice-mcp",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"description": "HackNotice MCP client for n8n: discover and call tools from hacknotice-mcp-server (Model Context Protocol, Streamable HTTP). Use with AI Agent like n8n's MCP Client Tool.",
 	"license": "MIT",
 	"homepage": "https://github.com/HackNotice/n8n-nodes-hacknotice-mcp#readme",
