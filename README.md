@@ -2,7 +2,7 @@
 
 [n8n](https://n8n.io/) community package: **HackNotice MCP Client** — connect workflows and **AI Agents** to tools exposed by [HackNotice](https://hacknotice.com/)'s MCP server using the Model Context Protocol ([MCP](https://modelcontextprotocol.io/)) over **Streamable HTTP**.
 
-This package is intentionally **separate** from `[n8n-nodes-hacknotice-api](https://github.com/HackNotice/n8n-nodes-hacknotice)` (HTTP REST alerts), per n8n community-node publishing rules: MCP tool nodes must not ship in the same npm package as the main HTTP integration.
+This package is intentionally **separate** from [n8n-nodes-hacknotice-api](https://github.com/HackNotice/n8n-nodes-hacknotice) (HTTP REST alerts), per n8n community-node publishing rules: MCP tool nodes must not ship in the same npm package as the main HTTP integration.
 
 ## Relation to n8n's MCP Client Tool
 
@@ -10,7 +10,7 @@ n8n's built-in **[MCP Client Tool](https://docs.n8n.io/integrations/builtin/clus
 
 ## Installation
 
-Follow the [community nodes installation guide](https://docs.n8n.io/integrations/community-nodes/installation/). npm package name: `**n8n-nodes-hacknotice-mcp`**.
+Follow the [community nodes installation guide](https://docs.n8n.io/integrations/community-nodes/installation/). npm package name: **`n8n-nodes-hacknotice-mcp`**.
 
 ## Credentials
 
@@ -45,11 +45,11 @@ This package is structured to align with [Community node verification guidelines
 
 | Guideline                          | How this package complies                                                                                                                                                                                                        |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **n8n-node tool**                  | Scaffolded and maintained with `[@n8n/node-cli](https://github.com/n8n-io/n8n-nodes-starter)`; run `npm run lint` and `npm run build` before release.                                                                            |
-| **Node types**                     | Not a duplicate of a built-in node; not generic flow-control. One third-party surface: **HackNotice MCP** (HTTP node for REST alerts lives in `[n8n-nodes-hacknotice-api](https://github.com/HackNotice/n8n-nodes-hacknotice)`). |
+| **n8n-node tool**                  | Scaffolded and maintained with [@n8n/node-cli](https://github.com/n8n-io/n8n-nodes-starter); run `npm run lint` and `npm run build` before release.                                                                            |
+| **Node types**                     | Not a duplicate of a built-in node; not generic flow-control. One third-party surface: **HackNotice MCP** (HTTP node for REST alerts lives in [n8n-nodes-hacknotice-api](https://github.com/HackNotice/n8n-nodes-hacknotice)). |
 | **Package source**                 | Public GitHub: [HackNotice/n8n-nodes-hacknotice-mcp](https://github.com/HackNotice/n8n-nodes-hacknotice-mcp). `package.json` `repository`, `homepage`, and npm metadata should match that repo and maintainer.                   |
 | **MIT license**                    | See [LICENSE.md](LICENSE.md).                                                                                                                                                                                                    |
-| **Provenance (May 2026+)**         | Publish via GitHub Actions with npm provenance — see `[.github/workflows/publish.yml](.github/workflows/publish.yml)`.                                                                                                           |
+| **Provenance (May 2026+)**         | Publish via GitHub Actions with npm provenance — see [.github/workflows/publish.yml](.github/workflows/publish.yml).                                                                                                           |
 | **No runtime `dependencies`**      | `dependencies` in `package.json` is empty; only `n8n-workflow` is listed as a **peer** (supplied by n8n).                                                                                                                        |
 | **Documentation**                  | This README, credential descriptions in the editor, and links to HackNotice / MCP / n8n docs below.                                                                                                                              |
 | **No env / filesystem for config** | Node logic does not read `process.env` or read/write the host filesystem for configuration; only n8n parameters and stored credentials are used. Outbound traffic uses n8n's HTTP helpers to the fixed MCP URL above.            |
@@ -74,6 +74,20 @@ That CLI **always downloads your package from the [npm registry](https://www.npm
 
 - [n8n Creator Portal](https://creators.n8n.io/)
 - [Verification guidelines](https://docs.n8n.io/integrations/creating-nodes/build/reference/verification-guidelines/)
+
+## Publishing with GitHub Actions
+
+Releases are published to npm from the **Publish** workflow when a **version tag** is pushed (for example `v1.0.2` from `release-it`).
+
+1. **One-time npm setup (pick one)**  
+   - **Trusted publishing (recommended):** On [npmjs.com](https://www.npmjs.com/) → package **Settings** → **Trusted Publishers** → add **GitHub Actions** with repository `HackNotice/n8n-nodes-hacknotice-mcp` and workflow file **`publish.yml`**. Leave the `NPM_TOKEN` repo secret unset.  
+   - **Token fallback:** Create a granular **Read and write** token for this package, then add repo secret **`NPM_TOKEN`** in GitHub (**Settings → Secrets and variables → Actions**).
+
+2. **Cut a release** (from a clean `main` with upstream set): run **`npm run release`**, choose the version, and let `release-it` commit, tag, and push. The tag push triggers the workflow; in CI, `n8n-node release` runs `lint`, `build`, and **`npm publish`** with provenance.
+
+3. **Re-run a failed publish** without a new version: **Actions → Publish → Run workflow**, select the **tag** you want to publish (must match `version` in `package.json` on that commit), then run.
+
+See [Trusted publishing for npm packages](https://docs.npmjs.com/trusted-publishers) and the comments in [.github/workflows/publish.yml](.github/workflows/publish.yml).
 
 ## Development
 

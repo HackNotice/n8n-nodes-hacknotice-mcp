@@ -20,15 +20,17 @@
 # ─── ONE-TIME SETUP ────────────────────────────────────────────────────────────
 #
 # Option A — OIDC Trusted Publishing (recommended, no long-lived secrets):
+#   Requires npm CLI ≥ 11.5.1 and Node ≥ 22.14 (this workflow uses Node 24).
+#   See https://docs.npmjs.com/trusted-publishers
 #   1. Log in to npmjs.com and open your package's settings.
 #   2. Under "Publish access" → "Trusted Publishers", click "Add a publisher".
 #   3. Select GitHub Actions and fill in:
 #        Repository owner: <your-github-username-or-org>
 #        Repository name:  <your-repo-name>
-#        Workflow name:    publish.yml
+#        Workflow filename: publish.yml  (exact name, case-sensitive)
 #        Environment:      (leave blank unless you use GitHub Environments)
-#   4. Leave the NPM_TOKEN secret unset in this repository. GitHub's OIDC
-#      token is used instead — no secret ever touches your repo settings.
+#   4. package.json "repository.url" must match this GitHub repo exactly.
+#   5. Leave NPM_TOKEN unset — npm publish uses OIDC from id-token: write.
 #
 # Option B — npm Automation Token (fallback):
 #   1. On npmjs.com: Access Tokens → Generate New Token → Granular Access Token.
@@ -52,6 +54,10 @@
 #
 # This will lint, build, prompt for a version bump, update the changelog,
 # commit, tag, and push — which triggers this workflow to publish to npm.
+#
+# To re-run a failed publish without a new commit (after fixing NPM_TOKEN /
+# trusted publisher settings): Actions → Publish → Run workflow → pick the
+# same tag branch in the ref selector, then run.
 
 name: Publish
 
@@ -61,6 +67,11 @@ on:
       # Matches 0.1.0, 1.2.3, 2.0.0-rc.1, etc. Also v1.1.0 (release-it default tagName).
       - '*.*.*'
       - 'v*.*.*'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.repository }}-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -76,25 +87,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Require version tag for manual runs
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*.*.*|refs/tags/*.*.*) ;;
+            *)
+              echo "::error::Select a version tag when running Publish manually (e.g. v1.0.2), not the default branch."
+              exit 1
+              ;;
+          esac
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'lts/*'
-          cache: 'npm'
+          # npm trusted publishing needs npm ≥ 11.5.1 (Node 24 ships a compatible npm).
+          node-version: '24'
+          # npm recommends not caching install artifacts for release/publish jobs.
+          # Required so npm can authenticate via OIDC (trusted publisher) or NODE_AUTH_TOKEN.
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: npm ci
 
       - name: Release
-        # Publishes to npm with a provenance attestation (requires id-token: write above).
-        # Lint and build run automatically as part of the release process.
-        #
-        # Option A (OIDC): leave NPM_TOKEN unset — the token step is skipped and
-        #   npm uses the OIDC exchange instead.
-        # Option B (token): set NPM_TOKEN in repo secrets — it is written to
-        #   .npmrc here before publishing.
-        run: |
-          [ -n "$NPM_TOKEN" ] && npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-          npm run release
+        # Publishes to npm with provenance (NPM_CONFIG_PROVENANCE + id-token: write; works with token or OIDC).
+        # Option A — Trusted publisher: do not set NPM_TOKEN; npm uses OIDC in GitHub-hosted runners.
+        # Option B — Token: add repo secret NPM_TOKEN (granular publish token for this package).
+        run: npm run release
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Provenance must not be forced in package.json: local `npm publish` has no OIDC provider (EUSAGE).
+          # On GitHub-hosted runners with id-token: write, this enables attestations for CI releases.
+          NPM_CONFIG_PROVENANCE: 'true'
