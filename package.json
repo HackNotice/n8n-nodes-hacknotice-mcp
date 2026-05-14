@@ -1,0 +1,61 @@
+{
+	"name": "n8n-nodes-hacknotice-mcp",
+	"version": "1.0.0",
+	"description": "HackNotice MCP client for n8n: discover and call tools from hacknotice-mcp-server (Model Context Protocol, Streamable HTTP). Use with AI Agent like n8n's MCP Client Tool.",
+	"license": "MIT",
+	"homepage": "https://github.com/HackNotice/n8n-nodes-hacknotice-mcp#readme",
+	"bugs": {
+		"url": "https://github.com/HackNotice/n8n-nodes-hacknotice-mcp/issues"
+	},
+	"keywords": ["n8n-community-node-package"],
+	"author": {
+		"name": "HackNotice",
+		"email": "nicolas@hacknotice.com",
+		"url": "https://hacknotice.com"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/HackNotice/n8n-nodes-hacknotice-mcp.git"
+	},
+	"scripts": {
+		"build": "n8n-node build",
+		"build:watch": "tsc --watch",
+		"dev": "n8n-node dev",
+		"lint": "n8n-node lint",
+		"lint:fix": "n8n-node lint --fix",
+		"test": "npm run lint && npm run build",
+		"release": "n8n-node release",
+		"prepublishOnly": "n8n-node prerelease"
+	},
+	"files": ["dist"],
+	"n8n": {
+		"n8nNodesApiVersion": 1,
+		"strict": true,
+		"credentials": ["dist/credentials/HackNoticeMcpApi.credentials.js"],
+		"nodes": ["dist/nodes/HackNoticeMcp/HackNoticeMcp.node.js"]
+	},
+	"devDependencies": {
+		"@n8n/node-cli": "^0.23.1",
+		"eslint": "9.32.0",
+		"prettier": "3.6.2",
+		"release-it": "^19.0.4",
+		"typescript": "5.9.2"
+	},
+	"peerDependencies": {
+		"n8n-workflow": ">=1.0.0"
+	},
+	"publishConfig": {
+		"provenance": true
+	},
+	"release-it": {
+		"git": {
+			"commitMessage": "chore: release v${version}",
+			"tagName": "v${version}",
+			"requireCleanWorkingDir": true
+		},
+		"github": {
+			"release": true
+		}
+	},
+	"dependencies": {}
+}

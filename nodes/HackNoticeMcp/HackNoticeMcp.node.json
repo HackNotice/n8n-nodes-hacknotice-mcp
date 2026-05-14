@@ -1,0 +1,21 @@
+{
+	"node": "n8n-nodes-hacknotice-mcp",
+	"nodeVersion": "1.0",
+	"codexVersion": "1.0",
+	"categories": ["Development", "Utility"],
+	"resources": {
+		"credentialDocumentation": [
+			{
+				"url": "https://github.com/HackNotice/n8n-nodes-hacknotice-mcp#readme"
+			}
+		],
+		"primaryDocumentation": [
+			{
+				"url": "https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.toolmcp/"
+			},
+			{
+				"url": "https://github.com/HackNotice/n8n-nodes-hacknotice-mcp#readme"
+			}
+		]
+	}
+}
