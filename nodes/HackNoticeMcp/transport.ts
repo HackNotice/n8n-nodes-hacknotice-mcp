@@ -21,15 +21,15 @@
  * - The first call (`initialize`) establishes a session. mcp-server returns
  *   the new session id in the `Mcp-Session-Id` response header. Subsequent
  *   requests must echo that header. `DELETE` ends the session.
- * - This module is invoked from both `loadOptions` and `execute` contexts;
- *   both expose `helpers.httpRequestWithAuthentication`, which is what we
- *   use so the `HackNoticeMcpApi` credential headers (integration key) are
- *   injected automatically.
+ * - This module is invoked from `supplyData` (AI Agent tool discovery and
+ *   invocation). The context exposes `helpers.httpRequestWithAuthentication`,
+ *   which injects `HackNoticeMcpApi` credential headers (integration key).
  */
 import type {
 	IExecuteFunctions,
 	IHttpRequestMethods,
 	ILoadOptionsFunctions,
+	ISupplyDataFunctions,
 } from 'n8n-workflow';
 
 import { HACKNOTICE_MCP_ENDPOINT_URL } from './constants';
@@ -56,6 +56,8 @@ export interface JsonRpcResponse<T = unknown> {
 /** A single MCP tool descriptor as returned by `tools/list`. */
 export interface McpToolDescriptor {
 	name: string;
+	/** Human-readable label from the MCP server (preferred for UI dropdowns). */
+	title?: string;
 	description?: string;
 	inputSchema?: Record<string, unknown>;
 }
@@ -68,8 +70,8 @@ export interface McpToolCallResult {
 	[k: string]: unknown;
 }
 
-/** Either an `IExecuteFunctions` or `ILoadOptionsFunctions` works for HTTP + credentials. */
-type RequestCapableContext = IExecuteFunctions | ILoadOptionsFunctions;
+/** n8n contexts that expose HTTP helpers + credential injection. */
+type RequestCapableContext = IExecuteFunctions | ILoadOptionsFunctions | ISupplyDataFunctions;
 
 /**
  * Parses an MCP Streamable HTTP response body, regardless of whether it
@@ -132,7 +134,7 @@ function readHeader(headers: unknown, name: string): string | undefined {
 /**
  * Stateful MCP client: holds a single session id across `initialize` →
  * `tools/list` / `tools/call` → `close`. Construct it once per node
- * execution (or once per `loadOptions` call) and discard.
+ * execution (or once per `supplyData` discovery / tool call) and discard.
  */
 export class McpStreamableHttpClient {
 	private sessionId: string | undefined;
@@ -156,9 +158,9 @@ export class McpStreamableHttpClient {
 		if (envelope.error) {
 			throw new Error(`MCP initialize failed: ${envelope.error.message}`);
 		}
-		if (!sessionId) {
-			throw new Error('MCP initialize did not return an Mcp-Session-Id header.');
-		}
+		// sessionId is only present when the server runs in stateful mode. The
+		// HackNotice MCP server uses stateless mode (sessionIdGenerator: undefined),
+		// so the header may be absent — that is expected and not an error.
 		this.sessionId = sessionId;
 
 		await this.notify('notifications/initialized', {});
