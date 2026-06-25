@@ -2,3 +2,4 @@ node_modules
 dist/
 .vscode/
 .tmp-n8n-check/
+.DS_Store
