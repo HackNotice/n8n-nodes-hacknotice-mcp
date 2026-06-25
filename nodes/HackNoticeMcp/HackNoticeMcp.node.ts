@@ -4,20 +4,17 @@
  * PURPOSE
  * ----
  * n8n community node that acts as an MCP **client** against HackNotice's
- * hacknotice-mcp-server (Streamable HTTP, JSON-RPC 2.0). Exposes either a
- * curated set of high-intent tools or the full MCP catalogue, with a
- * module-level TTL cache so the `tools/list` HTTP call is only made once per
- * credential per 5 minutes, not on every LLM iteration.
+ * hacknotice-mcp-server (Streamable HTTP, JSON-RPC 2.0). Exposes the live MCP
+ * catalogue to AI Agents, with optional include/exclude filtering and a
+ * module-level TTL cache so `tools/list` is only fetched once per credential
+ * per 5 minutes, not on every LLM iteration.
  *
  * KEY CONCEPTS
  * ----
  * - No Main input/output — only `NodeConnectionTypes.AiTool`.
- * - CURATED DEFAULT: The default exposure mode returns a small group of
- *   shortcut tools (for example, third-party watchlist alerts) plus a few
- *   high-value raw MCP tools. This gives the LLM clear function-call targets
- *   and avoids random clarification loops.
- * - FULL CATALOGUE MODE: Users can switch to exposing all MCP tools. The
- *   catalogue is still cached by integrationKey with a 5-minute TTL.
+ * - TOOL FILTERING: Users can expose all MCP tools, only selected tools, or
+ *   all except selected tools. The filter is applied to the cached live
+ *   catalogue returned by `tools/list`.
  * - `execute()` is required even though this node never runs on the main
  *   canvas. n8n's workflow execution engine includes sub-nodes in the
  *   directed graph (across ALL connection types) for partial/re-run
@@ -41,7 +38,9 @@ import { getConnectionHintNoticeField, logWrapper } from '@n8n/ai-utilities';
 import {
 	type IDataObject,
 	type IExecuteFunctions,
+	type ILoadOptionsFunctions,
 	type INodeExecutionData,
+	type INodePropertyOptions,
 	type INodeType,
 	type INodeTypeDescription,
 	type ISupplyDataFunctions,
@@ -75,18 +74,7 @@ interface CachedCatalogue {
 const CATALOGUE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const catalogueCache = new Map<string, CachedCatalogue>();
 
-const CURATED_RAW_TOOL_NAMES = new Set([
-	'hacknotice_third_party_watchlist_get_watchlist_domains',
-	'hacknotice_third_party_watchlist_search_domain',
-	'hacknotice_first_party_alerts',
-	'hacknotice_first_party_watchlist_get_watchlist_items',
-	'hacknotice_first_party_watchlist_search_item',
-	'search_global_breaches',
-	'search_exposure',
-	'search_credential_leaks',
-	'search_leaked_files',
-	'search_chatter',
-]);
+type CatalogueContext = ISupplyDataFunctions | ILoadOptionsFunctions;
 
 /**
  * Returns the cached catalogue for `key` if it is still within the TTL,
@@ -100,6 +88,41 @@ function getCached(key: string): CachedCatalogue | null {
 		return null;
 	}
 	return entry;
+}
+
+async function getCachedCatalogue(ctx: CatalogueContext): Promise<CachedCatalogue> {
+	const creds = await ctx.getCredentials('hackNoticeMcpApi');
+	const cacheKey = String((creds as Record<string, unknown>).integrationKey ?? '');
+	const cached = getCached(cacheKey);
+	if (cached) {
+		ctx.logger.info(
+			`[HackNoticeMcp] tools/list cache hit — ${cached.tools.length} tools (next refresh in ${Math.round((CATALOGUE_TTL_MS - (Date.now() - cached.fetchedAt)) / 1000)}s)`,
+		);
+		return cached;
+	}
+
+	ctx.logger.info('[HackNoticeMcp] tools/list cache miss — fetching tools from MCP server');
+	const client = new McpStreamableHttpClient(ctx);
+	const { serverInfo } = await client.open();
+	let tools: McpToolDescriptor[];
+	try {
+		tools = await client.listTools();
+	} finally {
+		await client.close();
+	}
+	const instructions =
+		serverInfo && typeof serverInfo.instructions === 'string'
+			? (serverInfo.instructions as string)
+			: undefined;
+	const catalogue = { tools, instructions, fetchedAt: Date.now() };
+	catalogueCache.set(cacheKey, catalogue);
+	ctx.logger.info(
+		`[HackNoticeMcp] tools/list fetched ${tools.length} tools — cached for ${CATALOGUE_TTL_MS / 60_000} min`,
+	);
+	if (instructions) {
+		ctx.logger.info(`[HackNoticeMcp] MCP server instructions: ${instructions}`);
+	}
+	return catalogue;
 }
 
 /**
@@ -128,8 +151,8 @@ function parseJsonOutput(text: string): IDataObject | IDataObject[] | string | n
 
 /**
  * Removes the generic "No filters provided" warning from parsed MCP output.
- * The curated third-party watchlist shortcut intentionally fetches unscoped
- * third-party alerts with defaults, so this warning is noise in n8n output.
+ * This warning is not useful in n8n AI Agent output and the MCP server no
+ * longer emits it, but keep this as a backwards-compatible cleanup layer.
  */
 function stripNoFiltersWarning(
 	value: IDataObject | IDataObject[] | string | number | boolean | null,
@@ -190,13 +213,28 @@ function normalizeToolArgs(toolName: string, args: Record<string, unknown>): Rec
 	return args;
 }
 
+/**
+ * Returns the label shown in n8n multi-select dropdowns for an MCP tool.
+ * Prefers the MCP `title`; falls back to a readable form of the technical name.
+ */
+function getToolDisplayName(tool: McpToolDescriptor): string {
+	const title = typeof tool.title === 'string' ? tool.title.trim() : '';
+	if (title) return title;
+	return tool.name
+		.replace(/^hacknotice_/, '')
+		.split('_')
+		.filter(Boolean)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(' ');
+}
+
 function missingArgumentObservation(toolName: string, requiredField: string, hint: string): string {
 	return JSON.stringify({
 		error: `${toolName} requires ${requiredField}`,
 		requiredField,
 		hint,
 		retry:
-			'Call this tool again with the required field, or choose a watchlist alert shortcut if the user asked for watchlist alerts.',
+			'Call this tool again with the required field, or choose a more specific exposed tool.',
 	});
 }
 
@@ -222,7 +260,7 @@ async function callMcpTool(
 			return missingArgumentObservation(
 				'search_global_breaches',
 				'term',
-				'Provide a company, domain, breach name, or keyword as `term`. If the user asked for third-party watchlist alerts, use hacknotice_get_third_party_watchlist_alerts instead.',
+				'Provide a company, domain, breach name, or keyword as `term`.',
 			);
 		}
 		if (
@@ -306,25 +344,59 @@ export class HackNoticeMcp implements INodeType {
 			getConnectionHintNoticeField([NodeConnectionTypes.AiAgent]),
 			{
 				displayName: 'Tools to Expose',
-				name: 'toolExposureMode',
+				name: 'toolFilterMode',
 				type: 'options',
-				default: 'curated',
-				description:
-					'Choose whether to expose a small, agent-friendly tool set or the full MCP catalogue',
+				default: 'all',
+				description: 'Choose which MCP tools to expose to the AI Agent',
 				options: [
 					{
-						name: 'Curated Shortcuts (Recommended)',
-						value: 'curated',
-						description:
-							'Expose a small set of high-intent HackNotice tools. Best for AI Agent reliability.',
+						name: 'All',
+						value: 'all',
+						description: 'Expose the full live MCP catalogue',
 					},
 					{
-						name: 'All MCP Tools',
-						value: 'all',
-						description:
-							'Expose the full MCP catalogue. Useful for advanced workflows but can make the agent ask more clarifying questions.',
+						name: 'Selected',
+						value: 'selected',
+						description: 'Expose only the tools selected below',
+					},
+					{
+						name: 'All Except Selected',
+						value: 'except',
+						description: 'Expose all tools except the tools selected below',
 					},
 				],
+			},
+			{
+				displayName: 'Tools to Include',
+				name: 'includeTools',
+				type: 'multiOptions',
+				default: [],
+				description:
+					'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				typeOptions: {
+					loadOptionsMethod: 'getTools',
+				},
+				displayOptions: {
+					show: {
+						toolFilterMode: ['selected'],
+					},
+				},
+			},
+			{
+				displayName: 'Tools to Exclude',
+				name: 'excludeTools',
+				type: 'multiOptions',
+				default: [],
+				description:
+					'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				typeOptions: {
+					loadOptionsMethod: 'getTools',
+				},
+				displayOptions: {
+					show: {
+						toolFilterMode: ['except'],
+					},
+				},
 			},
 			{
 				displayName: 'Debug Mode',
@@ -337,6 +409,21 @@ export class HackNoticeMcp implements INodeType {
 		],
 	};
 
+	methods = {
+		loadOptions: {
+			async getTools(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const { tools } = await getCachedCatalogue(this);
+				return tools
+					.filter((tool) => Boolean(tool?.name))
+					.map((tool) => ({
+						name: getToolDisplayName(tool),
+						value: tool.name,
+						description: tool.description,
+					}));
+			},
+		},
+	};
+
 	/**
 	 * Fetches the MCP tools catalogue (with caching) and returns one
 	 * DynamicStructuredTool per MCP tool to the AI Agent.
@@ -347,141 +434,27 @@ export class HackNoticeMcp implements INodeType {
 	 * calls — critical because n8n calls supplyData() on every LLM iteration.
 	 */
 	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
-		// Use the integrationKey as cache key so each credential set gets its
-		// own isolated catalogue. getCredentials() is fast (reads from n8n's
-		// in-memory store, no network call).
-		const creds = await this.getCredentials('hackNoticeMcpApi');
-		const cacheKey = String((creds as Record<string, unknown>).integrationKey ?? '');
-
-		let catalogue = getCached(cacheKey);
-
-		if (catalogue) {
-			this.logger.info(
-				`[HackNoticeMcp] supplyData: cache hit — ${catalogue.tools.length} tools (next refresh in ${Math.round((CATALOGUE_TTL_MS - (Date.now() - catalogue.fetchedAt)) / 1000)}s)`,
-			);
-		} else {
-			// Cache miss: open an MCP session, fetch the tools list, close.
-			this.logger.info('[HackNoticeMcp] supplyData: cache miss — fetching tools from MCP server');
-			const client = new McpStreamableHttpClient(this);
-			const { serverInfo } = await client.open();
-			let tools: McpToolDescriptor[];
-			try {
-				tools = await client.listTools();
-			} finally {
-				await client.close();
-			}
-			const instructions =
-				serverInfo && typeof serverInfo.instructions === 'string'
-					? (serverInfo.instructions as string)
-					: undefined;
-			catalogue = { tools, instructions, fetchedAt: Date.now() };
-			catalogueCache.set(cacheKey, catalogue);
-			this.logger.info(
-				`[HackNoticeMcp] supplyData: fetched ${tools.length} tools — cached for ${CATALOGUE_TTL_MS / 60_000} min`,
-			);
-			if (instructions) {
-				this.logger.info(`[HackNoticeMcp] MCP server instructions: ${instructions}`);
-			}
-		}
-
-		const { tools: mcpTools } = catalogue;
-		const exposureMode = this.getNodeParameter('toolExposureMode', itemIndex, 'curated') as
-			| 'curated'
-			| 'all';
+		const { tools: mcpTools } = await getCachedCatalogue(this);
+		const filterMode = this.getNodeParameter('toolFilterMode', itemIndex, 'all') as
+			| 'all'
+			| 'selected'
+			| 'except';
+		const includeTools = this.getNodeParameter('includeTools', itemIndex, []) as string[];
+		const excludeTools = this.getNodeParameter('excludeTools', itemIndex, []) as string[];
 		const forceDebug = this.getNodeParameter('debugMode', itemIndex, false) as boolean;
 
-		// This shortcut exists because generic prompts like "give me the alerts
-		// from my thirdparty watchlist" should be actionable without the model
-		// asking for time range, saved-search, or limit. It maps that intent to
-		// the underlying MCP alert endpoint with practical defaults.
-		const thirdPartyAlertsShortcut = new DynamicStructuredTool({
-			name: 'hacknotice_get_third_party_watchlist_alerts',
-			description:
-				'Use this immediately when the user asks for third-party watchlist alerts, ' +
-				'thirdparty alerts, vendor alerts, supplier alerts, or "alerts from my thirdparty watchlist". ' +
-				'Do not ask clarification questions. Defaults to timeRange=lastMonth and limit=100.',
-			schema: buildZodSchema({
-				type: 'object',
-				properties: {
-					timeRange: {
-						type: 'string',
-						enum: ['lastDay', 'lastWeek', 'lastMonth'],
-						description: 'Alert time range. Use lastMonth when the user does not specify a range.',
-					},
-					limit: {
-						type: 'integer',
-						description: 'Maximum number of alerts to return. Use 100 when unspecified.',
-					},
-					debug: {
-						type: 'boolean',
-						description: 'Set true only when the user explicitly asks for debug output.',
-					},
-				},
-			}),
-			func: async (args: Record<string, unknown>) =>
-				await callMcpTool(
-					this,
-					'hacknotice_third_party_alerts',
-					{
-						timeRange: typeof args.timeRange === 'string' ? args.timeRange : 'lastMonth',
-						limit: typeof args.limit === 'number' ? args.limit : 100,
-						...(args.debug === true ? { debug: true } : {}),
-					},
-					itemIndex,
-					forceDebug,
-				),
-		});
-
-		const firstPartyAlertsShortcut = new DynamicStructuredTool({
-			name: 'hacknotice_get_first_party_watchlist_alerts',
-			description:
-				'Use this immediately when the user asks for first-party watchlist alerts, ' +
-				'first party alerts, own-domain alerts, company domain alerts, or "alerts from my first party watchlist". ' +
-				'Do not ask clarification questions. Defaults to timeRange=lastMonth and limit=100.',
-			schema: buildZodSchema({
-				type: 'object',
-				properties: {
-					timeRange: {
-						type: 'string',
-						enum: ['lastDay', 'lastWeek', 'lastMonth'],
-						description: 'Alert time range. Use lastMonth when the user does not specify a range.',
-					},
-					limit: {
-						type: 'integer',
-						description: 'Maximum number of alerts to return. Use 100 when unspecified.',
-					},
-					debug: {
-						type: 'boolean',
-						description: 'Set true only when the user explicitly asks for debug output.',
-					},
-				},
-			}),
-			func: async (args: Record<string, unknown>) =>
-				await callMcpTool(
-					this,
-					'hacknotice_first_party_alerts',
-					{
-						timeRange: typeof args.timeRange === 'string' ? args.timeRange : 'lastMonth',
-						limit: typeof args.limit === 'number' ? args.limit : 100,
-						...(args.debug === true ? { debug: true } : {}),
-					},
-					itemIndex,
-					forceDebug,
-				),
-		});
-
 		const selectedMcpTools =
-			exposureMode === 'all'
-				? mcpTools
-				: mcpTools.filter((tool) => CURATED_RAW_TOOL_NAMES.has(tool.name));
+			filterMode === 'selected'
+				? mcpTools.filter((tool) => includeTools.includes(tool.name))
+				: filterMode === 'except'
+					? mcpTools.filter((tool) => !excludeTools.includes(tool.name))
+					: mcpTools;
 
 		const langchainTools = [
-			thirdPartyAlertsShortcut,
-			firstPartyAlertsShortcut,
 			...selectedMcpTools.filter((t) => Boolean(t?.name)).map((mcpTool) => {
 				let description = mcpTool.description ?? mcpTool.name;
 				if (mcpTool.name === 'search_global_breaches') {
-					description = `${description} REQUIRED: pass a string \`term\` argument containing the company, domain, breach name, or keyword to search. Do NOT use for generic watchlist-alert requests; use hacknotice_get_third_party_watchlist_alerts or hacknotice_get_first_party_watchlist_alerts instead.`;
+					description = `${description} REQUIRED: pass a string \`term\` argument containing the company, domain, breach name, or keyword to search.`;
 				} else if (['search_exposure', 'search_chatter', 'search_leaked_files'].includes(mcpTool.name)) {
 					description = `${description} REQUIRED: pass a string \`query\` argument containing the company, domain, filename, or keyword to search.`;
 				} else if (mcpTool.name === 'search_credential_leaks') {
@@ -498,7 +471,7 @@ export class HackNoticeMcp implements INodeType {
 		];
 
 		this.logger.info(
-			`[HackNoticeMcp] supplyData: exposing ${langchainTools.length} tools in ${exposureMode} mode`,
+			`[HackNoticeMcp] supplyData: exposing ${langchainTools.length} tools in ${filterMode} mode`,
 		);
 
 		const sourceNodeName = this.getNode().name;
@@ -555,35 +528,7 @@ export class HackNoticeMcp implements INodeType {
 
 			const rawArgs = { ...input };
 			delete rawArgs.tool;
-			let output: string;
-
-			if (requestedTool === 'hacknotice_get_third_party_watchlist_alerts') {
-				output = await callMcpTool(
-					this,
-					'hacknotice_third_party_alerts',
-					{
-						timeRange: typeof rawArgs.timeRange === 'string' ? rawArgs.timeRange : 'lastMonth',
-						limit: typeof rawArgs.limit === 'number' ? rawArgs.limit : 100,
-						...(rawArgs.debug === true ? { debug: true } : {}),
-					},
-					itemIndex,
-					forceDebug,
-				);
-			} else if (requestedTool === 'hacknotice_get_first_party_watchlist_alerts') {
-				output = await callMcpTool(
-					this,
-					'hacknotice_first_party_alerts',
-					{
-						timeRange: typeof rawArgs.timeRange === 'string' ? rawArgs.timeRange : 'lastMonth',
-						limit: typeof rawArgs.limit === 'number' ? rawArgs.limit : 100,
-						...(rawArgs.debug === true ? { debug: true } : {}),
-					},
-					itemIndex,
-					forceDebug,
-				);
-			} else {
-				output = await callMcpTool(this, requestedTool, rawArgs, itemIndex, forceDebug);
-			}
+			const output = await callMcpTool(this, requestedTool, rawArgs, itemIndex, forceDebug);
 
 			results.push({
 				json: { output: stripNoFiltersWarning(parseJsonOutput(output)) },

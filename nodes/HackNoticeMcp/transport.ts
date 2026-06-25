@@ -56,6 +56,8 @@ export interface JsonRpcResponse<T = unknown> {
 /** A single MCP tool descriptor as returned by `tools/list`. */
 export interface McpToolDescriptor {
 	name: string;
+	/** Human-readable label from the MCP server (preferred for UI dropdowns). */
+	title?: string;
 	description?: string;
 	inputSchema?: Record<string, unknown>;
 }

@@ -11,7 +11,7 @@ n8n's built-in **[MCP Client Tool](https://docs.n8n.io/integrations/builtin/clus
 - It uses HackNotice's fixed **Streamable HTTP** `/mcp` endpoint.
 - It authenticates with a HackNotice **Integration Key** credential.
 - It connects only to the AI Agent **Tool** input.
-- It defaults to a curated set of high-intent HackNotice tools so the AI Agent does not have to choose from the full MCP catalogue on every request.
+- It lets users choose whether to expose all MCP tools, only selected tools, or all except selected tools.
 
 ## Installation
 
@@ -29,7 +29,7 @@ Connect it to an **AI Agent** node's **Tool** input. At execution time it:
 
 1. Fetches the live HackNotice MCP tool catalogue with `tools/list`.
 2. Caches that catalogue per Integration Key for 5 minutes.
-3. Exposes either a curated tool set or the full MCP catalogue to the AI Agent.
+3. Exposes the configured tool set to the AI Agent.
 4. Executes requested tools through MCP `tools/call`.
 
 The node includes the `execute()` implementation required by n8n's v3 AI Agent engine, so tool calls are recorded in n8n executions and the node turns green when invoked.
@@ -43,31 +43,17 @@ Create a workflow like:
 3. **AI Agent**
 4. **HackNotice MCP** connected to the AI Agent's **Tool** input
 
-For most workflows, leave **Tools to Expose** set to **Curated Shortcuts (Recommended)**.
+Use **Tools to Expose** to control which MCP tools are available to the AI Agent.
 
 ### Tools to Expose
 
 | Mode | Behavior |
 |------|----------|
-| **Curated Shortcuts (Recommended)** | Exposes a smaller, agent-friendly tool set. This is best for reliable AI Agent behavior with short prompts. |
-| **All MCP Tools** | Exposes the full live HackNotice MCP catalogue. Use this for advanced workflows that need every MCP tool. |
+| **All** | Exposes the full live MCP catalogue. This is the default. |
+| **Selected** | Exposes only the tools selected in **Tools to Include**. |
+| **All Except Selected** | Exposes every live MCP tool except those selected in **Tools to Exclude**. |
 
-The curated set currently includes:
-
-- `hacknotice_get_third_party_watchlist_alerts`
-- `hacknotice_get_first_party_watchlist_alerts`
-- `hacknotice_third_party_watchlist_get_watchlist_domains`
-- `hacknotice_third_party_watchlist_search_domain`
-- `hacknotice_first_party_alerts`
-- `hacknotice_first_party_watchlist_get_watchlist_items`
-- `hacknotice_first_party_watchlist_search_item`
-- `search_global_breaches`
-- `search_exposure`
-- `search_credential_leaks`
-- `search_leaked_files`
-- `search_chatter`
-
-The two `hacknotice_get_*_watchlist_alerts` tools are shortcuts that use sensible defaults (`timeRange=lastMonth`, `limit=100`) so prompts such as "give me the alerts from my thirdparty watchlist" run without follow-up questions.
+The **Tools to Include** and **Tools to Exclude** fields load their options from the live HackNotice MCP server with `tools/list`, so they stay aligned with the server catalogue.
 
 ### Debug Mode
 
@@ -83,7 +69,7 @@ This is useful for validating the full flow from n8n prompt to MCP server to Hac
 
 ### Prompting Tips
 
-Short prompts work best with curated mode. Examples:
+Examples:
 
 - `give me the alerts from my thirdparty watchlist`
 - `give me the alerts from my first party watchlist`
@@ -91,7 +77,7 @@ Short prompts work best with curated mode. Examples:
 - `find credential leaks for example.com`
 - `search leaked files for Acme spreadsheets`
 
-If you enable **All MCP Tools**, be more explicit about the tool intent and required fields. For example, global breach search requires a `term` such as a company, domain, breach name, or keyword.
+For best results with the AI Agent, expose only the tool families needed by your workflow. For example, a third-party alert workflow can use **Selected** mode with `hacknotice_third_party_alerts` and watchlist tools.
 
 The built-in **[MCP Client Tool](https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.toolmcp/)** route can also connect to HackNotice's endpoint if you prefer the generic n8n MCP node:
 
@@ -121,8 +107,8 @@ See **[SUBMISSION.md](SUBMISSION.md)** for reviewer steps and checklist.
 2. Add **AI Agent** and connect an OpenAI-compatible Chat Model.
 3. Add **HackNotice MCP** and connect it to the AI Agent **Tool** input.
 4. Attach **HackNotice MCP API** credentials.
-5. Keep **Tools to Expose** set to **Curated Shortcuts (Recommended)**.
-6. Send: `give me the alerts from my thirdparty watchlist`.
+5. Keep **Tools to Expose** set to **All**, or choose **Selected** and include the tools you want the agent to use.
+6. Send a prompt that maps to one of the exposed tools, for example: `search global breaches for acme.com`.
 
 The HackNotice MCP node should appear as executed in the n8n execution log when the agent calls a tool.
 
