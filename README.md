@@ -11,7 +11,7 @@ n8n's built-in **[MCP Client Tool](https://docs.n8n.io/integrations/builtin/clus
 - It uses HackNotice's fixed **Streamable HTTP** `/mcp` endpoint.
 - It authenticates with a HackNotice **Integration Key** credential.
 - It connects only to the AI Agent **Tool** input.
-- It lets users choose whether to expose all MCP tools, only selected tools, or all except selected tools.
+- It lets users choose whether to expose all MCP tools, only selected tools, all except selected tools, or tools by functional group.
 
 ## Installation
 
@@ -53,9 +53,22 @@ Use **Tools to Expose** to control which MCP tools are available to the AI Agent
 | **All**                 | Exposes the full live MCP catalogue. This is the default.                  |
 | **Selected**            | Exposes only the tools selected in **Tools to Include**.                   |
 | **All Except Selected** | Exposes every live MCP tool except those selected in **Tools to Exclude**. |
+| **By Group**            | Exposes tools from the functional groups selected in **Tool Groups**.      |
 
 
 The **Tools to Include** and **Tools to Exclude** fields load their options from the live HackNotice MCP server with `tools/list`, so they stay aligned with the server catalogue.
+
+### By Group
+
+**Tool Groups** is a fixed, multi-select list of HackNotice's functional tool families — pick one or more:
+
+- **Third-Party** — third-party vendor breach alerts and watchlist management (`hacknotice_third_party_*`)
+- **First-Party** — first-party domain breach alerts and watchlist management (`hacknotice_first_party_*`)
+- **End User** — end-user credential alerts and watchlist management (`hacknotice_end_user_*`)
+- **Research** — research phrase and wordpool alerts (`hacknotice_research_*`)
+- **Assessments** — vendor security assessments, invites, templates, and data files (`hacknotice_assessment_*`)
+
+General/search tools that don't belong to a single group (credential verification, saved searches, and the global breach/exposure/chatter/leaked-file/correlated-leak search tools) are always exposed in **By Group** mode, regardless of which groups are selected, since an agent typically needs search capability no matter which functional area it's working in.
 
 ### Debug Mode
 
