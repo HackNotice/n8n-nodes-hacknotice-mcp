@@ -50,6 +50,7 @@ import {
 } from 'n8n-workflow';
 
 import { McpStreamableHttpClient, type McpToolDescriptor } from './transport';
+import { TOOL_GROUPS, toolMatchesSelectedGroups } from './toolGroups';
 import { buildZodSchema, extractErrorText, sanitizeDescription } from './zodHelpers';
 
 // ---------------------------------------------------------------------------
@@ -364,7 +365,26 @@ export class HackNoticeMcp implements INodeType {
 						value: 'except',
 						description: 'Expose all tools except the tools selected below',
 					},
+					{
+						name: 'By Group',
+						value: 'groups',
+						description:
+							'Expose tools belonging to the selected functional groups below. General/search tools (credential verification, saved searches, global breach/exposure/chatter search) are always included.',
+					},
 				],
+			},
+			{
+				displayName: 'Tool Groups',
+				name: 'toolGroups',
+				type: 'multiOptions',
+				default: [],
+				description: 'Functional groups of tools to expose. General/search tools are always included.',
+				options: TOOL_GROUPS,
+				displayOptions: {
+					show: {
+						toolFilterMode: ['groups'],
+					},
+				},
 			},
 			{
 				displayName: 'Tools to Include',
@@ -438,9 +458,11 @@ export class HackNoticeMcp implements INodeType {
 		const filterMode = this.getNodeParameter('toolFilterMode', itemIndex, 'all') as
 			| 'all'
 			| 'selected'
-			| 'except';
+			| 'except'
+			| 'groups';
 		const includeTools = this.getNodeParameter('includeTools', itemIndex, []) as string[];
 		const excludeTools = this.getNodeParameter('excludeTools', itemIndex, []) as string[];
+		const selectedGroups = this.getNodeParameter('toolGroups', itemIndex, []) as string[];
 		const forceDebug = this.getNodeParameter('debugMode', itemIndex, false) as boolean;
 
 		const selectedMcpTools =
@@ -448,7 +470,9 @@ export class HackNoticeMcp implements INodeType {
 				? mcpTools.filter((tool) => includeTools.includes(tool.name))
 				: filterMode === 'except'
 					? mcpTools.filter((tool) => !excludeTools.includes(tool.name))
-					: mcpTools;
+					: filterMode === 'groups'
+						? mcpTools.filter((tool) => toolMatchesSelectedGroups(tool.name, selectedGroups))
+						: mcpTools;
 
 		const langchainTools = [
 			...selectedMcpTools.filter((t) => Boolean(t?.name)).map((mcpTool) => {
